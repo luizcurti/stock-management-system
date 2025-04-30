@@ -1,0 +1,38 @@
+{
+  "name": "Stock",
+  "version": "1.0.0",
+  "license": "MIT",
+  "dependencies": {
+    "@types/jsonwebtoken": "^9.0.9",
+    "@types/uuid": "^10.0.0",
+    "body-parser": "^2.2.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^5.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "mysql2": "^3.14.0",
+    "serverless-http": "^3.2.0",
+    "swagger-ui-express": "^5.0.1",
+    "tsoa": "^6.6.0",
+    "uuid": "^11.1.0"
+  },
+  "devDependencies": {
+    "@types/body-parser": "^1.19.5",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.1",
+    "@types/jest": "^29.5.14",
+    "@types/node": "^22.14.0",
+    "@types/swagger-ui-express": "^4.1.8",
+    "concurrently": "^9.1.2",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.3.1",
+    "typescript": "^5.8.2"
+  },
+  "main": "build/server.js",
+  "scripts": {
+    "build": "tsoa spec-and-routes && tsoa swagger && tsc --outdir build",
+    "start": "node build/local.js",
+    "test": "jest",
+    "restart": "clear && tsoa spec-and-routes && tsoa swagger && tsc --outdir build && node build/local.js"
+  }
+}
