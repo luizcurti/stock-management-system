@@ -1,5 +1,5 @@
-import { DatabaseConfig } from "./databaseConfig";
-import mysql from "mysql2";
+import { DatabaseConfig } from './databaseConfig';
+import mysql from 'mysql2';
 
 const dbConfig = <DatabaseConfig>{
   host: process.env.DB_HOST,
@@ -9,7 +9,7 @@ const dbConfig = <DatabaseConfig>{
   connectionLimit: 100,
   waitForConnections: true,
   queueLimit: 0,
-}
+};
 
 const pool = mysql.createPool(dbConfig);
 export const db = pool.promise();
