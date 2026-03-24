@@ -20,6 +20,7 @@ module.exports = {
     },
   },
   testMatch: ['**/tests/**/*.spec.ts', '**/tests/**/*.test.ts'],
+  testPathIgnorePatterns: ['<rootDir>/tests/e2e/'],
   modulePathIgnorePatterns: ['mockData'],
   setupFilesAfterEnv: ['<rootDir>/tests/setup.ts'],
   clearMocks: true,
