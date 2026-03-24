@@ -160,7 +160,7 @@ export class ProductRepository {
             return { id, product, reservationToken: uuid };
         } catch (error) {
             await connection.rollback();
-            if (error instanceof customError) throw error;
+            if (error instanceof customError) {throw error;}
             throw new customError(500, 'Error reserving stock.');
         } finally {
             connection.release();
@@ -209,7 +209,7 @@ export class ProductRepository {
             await connection.commit();
         } catch (error) {
             await connection.rollback();
-            if (error instanceof customError) throw error;
+            if (error instanceof customError) {throw error;}
             throw new customError(500, 'Error returning stock.');
         } finally {
             connection.release();
@@ -255,7 +255,7 @@ export class ProductRepository {
             await connection.commit();
         } catch (error) {
             await connection.rollback();
-            if (error instanceof customError) throw error;
+            if (error instanceof customError) {throw error;}
             throw new customError(500, 'Error deleting product from stock.');
         } finally {
             connection.release();
@@ -295,7 +295,7 @@ export class ProductRepository {
             await connection.commit();
         } catch (error) {
             await connection.rollback();
-            if (error instanceof customError) throw error;
+            if (error instanceof customError) {throw error;}
             throw new customError(500, 'Error selling stock.');
         } finally {
             connection.release();
