@@ -28,7 +28,7 @@ async function cleanDB(conn: Connection): Promise<void> {
 // ─── E2E Suite ───────────────────────────────────────────────────────────────
 
 describe('Product API — E2E', () => {
-  let conn: Connection;
+  let conn: Connection | null = null;
 
   // tokens captured mid-test and reused in subsequent tests
   let tokenReserve1: string;
@@ -51,7 +51,7 @@ describe('Product API — E2E', () => {
   });
 
   afterAll(async () => {
-    await conn.end();
+    if (conn) await conn.end();
   });
 
   // ══════════════════════════════════════════════════════════════════════════
