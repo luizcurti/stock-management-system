@@ -2,9 +2,9 @@ import { Pool } from 'mysql2/promise';
 import { db } from '../config/database';
 import {
     SelectProduct,
-    UpdateProduct,
     searchStock,
     searchStockReserve,
+    searchStockSold,
 } from '../models/queryResultsTypes';
 import { customError } from '../customErrors/customErrors';
 import { ResultSetHeader } from 'mysql2';
@@ -12,7 +12,6 @@ import {
     responsePathStock,
     responseGetStock,
     responseInsertStockReserve,
-    responseInsertStockSold,
 } from '../models/responseTypes';
 
 export class ProductRepository {
@@ -35,25 +34,6 @@ export class ProductRepository {
             return null;
         } catch {
             throw new customError(500, 'Error fetching data from IN_STOCK table.');
-        }
-    }
-
-    public async searchStockReserve(
-        id: number,
-        reservationToken: string
-    ): Promise<searchStockReserve | null> {
-        try {
-            const [result] = await this.db.query<searchStockReserve[]>(
-                'SELECT id_stock, product, reservationToken FROM RESERVED WHERE id_stock = ? AND reservationToken = ?',
-                [id, reservationToken]
-            );
-
-            if (result.length > 0) {
-                return result[0];
-            }
-            return null;
-        } catch {
-            throw new customError(500, 'Error fetching data from RESERVED table.');
         }
     }
 
@@ -141,66 +121,184 @@ export class ProductRepository {
         }
     }
 
-    public async insertStockReserve(
-        id: number,
-        product: string,
-        uuid: string
-    ): Promise<responseInsertStockReserve> {
+    /**
+     * Atomically reserves one unit of stock using a transaction with SELECT FOR UPDATE.
+     * Prevents race conditions when multiple requests compete for the last unit.
+     */
+    public async reserveStock(id: number, uuid: string): Promise<responseInsertStockReserve> {
+        const connection = await this.db.getConnection();
         try {
-            await this.db.query<UpdateProduct[]>(
+            await connection.beginTransaction();
+
+            const [rows] = await connection.query<searchStock[]>(
+                'SELECT id, product, qtd FROM IN_STOCK WHERE id = ? FOR UPDATE',
+                [id]
+            );
+
+            if (rows.length === 0) {
+                throw new customError(404, 'Product not found in stock.');
+            }
+
+            const { product, qtd } = rows[0];
+
+            if (qtd <= 0) {
+                throw new customError(400, 'Insufficient stock quantity.');
+            }
+
+            await connection.query(
+                'UPDATE IN_STOCK SET qtd = ? WHERE id = ?',
+                [qtd - 1, id]
+            );
+
+            await connection.query(
                 'INSERT INTO RESERVED (id_stock, product, reservationToken) VALUES (?, ?, ?)',
                 [id, product, uuid]
             );
 
-            return {
-                id: id,
-                product: product,
-                reservationToken: uuid,
-            };
-        } catch {
-            throw new customError(500, 'Error inserting data into RESERVED table.');
+            await connection.commit();
+
+            return { id, product, reservationToken: uuid };
+        } catch (error) {
+            await connection.rollback();
+            if (error instanceof customError) throw error;
+            throw new customError(500, 'Error reserving stock.');
+        } finally {
+            connection.release();
         }
     }
 
-    public async deleteStockReserve(
-        id: number,
-        reservationToken: string
-    ): Promise<void> {
+    /**
+     * Atomically returns a reserved unit back to stock.
+     * Verifies reservation exists before modifying stock to prevent inconsistency.
+     */
+    public async returnStock(id: number, reservationToken: string): Promise<void> {
+        const connection = await this.db.getConnection();
         try {
-            const [result] = await this.db.query<ResultSetHeader>(
+            await connection.beginTransaction();
+
+            const [reserveRows] = await connection.query<searchStockReserve[]>(
+                'SELECT id_stock, product, reservationToken FROM RESERVED WHERE id_stock = ? AND reservationToken = ? FOR UPDATE',
+                [id, reservationToken]
+            );
+
+            if (reserveRows.length === 0) {
+                throw new customError(404, 'Reservation not found.');
+            }
+
+            const [stockRows] = await connection.query<searchStock[]>(
+                'SELECT id, product, qtd FROM IN_STOCK WHERE id = ? FOR UPDATE',
+                [id]
+            );
+
+            if (stockRows.length === 0) {
+                throw new customError(404, 'Product not found in stock.');
+            }
+
+            const { qtd } = stockRows[0];
+
+            await connection.query(
                 'DELETE FROM RESERVED WHERE id_stock = ? AND reservationToken = ?',
                 [id, reservationToken]
             );
 
-            if (result.affectedRows === 0) {
-                throw new customError(404, 'Reservation not found.');
-            }
+            await connection.query(
+                'UPDATE IN_STOCK SET qtd = ? WHERE id = ?',
+                [qtd + 1, id]
+            );
+
+            await connection.commit();
         } catch (error) {
-            if (error instanceof customError) {
-                throw error;
-            }
-            throw new customError(500, 'Error deleting data in RESERVED table.');
+            await connection.rollback();
+            if (error instanceof customError) throw error;
+            throw new customError(500, 'Error returning stock.');
+        } finally {
+            connection.release();
         }
     }
 
-    public async insertStockSold(
-        id: number,
-        product: string,
-        uuid: string
-    ): Promise<responseInsertStockSold> {
+    /**
+     * Atomically deletes a product from stock.
+     * Refuses if active reservations or sales history exist.
+     */
+    public async deleteStock(id: number): Promise<void> {
+        const connection = await this.db.getConnection();
         try {
-            await this.db.query(
-                'INSERT INTO SOLD (id_stock, product, reservationToken) VALUES (?, ?, ?)',
-                [id, product, uuid]
+            await connection.beginTransaction();
+
+            const [reserveRows] = await connection.query<searchStockReserve[]>(
+                'SELECT id_stock FROM RESERVED WHERE id_stock = ? LIMIT 1',
+                [id]
             );
 
-            return {
-                id: id,
-                product: product,
-                reservationToken: uuid,
-            };
-        } catch {
-            throw new customError(500, 'Error inserting data into SOLD table.');
+            if (reserveRows.length > 0) {
+                throw new customError(409, 'Cannot delete product with active reservations.');
+            }
+
+            const [soldRows] = await connection.query<searchStockSold[]>(
+                'SELECT id_stock FROM SOLD WHERE id_stock = ? LIMIT 1',
+                [id]
+            );
+
+            if (soldRows.length > 0) {
+                throw new customError(409, 'Cannot delete product with sales history.');
+            }
+
+            const [result] = await connection.query<ResultSetHeader>(
+                'DELETE FROM IN_STOCK WHERE id = ?',
+                [id]
+            );
+
+            if (result.affectedRows === 0) {
+                throw new customError(404, 'Product not found.');
+            }
+
+            await connection.commit();
+        } catch (error) {
+            await connection.rollback();
+            if (error instanceof customError) throw error;
+            throw new customError(500, 'Error deleting product from stock.');
+        } finally {
+            connection.release();
+        }
+    }
+
+    /**
+     * Atomically marks a reservation as sold.
+     * Inserts into SOLD and removes from RESERVED in a single transaction.
+     */
+    public async sellStock(id: number, reservationToken: string): Promise<void> {
+        const connection = await this.db.getConnection();
+        try {
+            await connection.beginTransaction();
+
+            const [rows] = await connection.query<searchStockReserve[]>(
+                'SELECT id_stock, product, reservationToken FROM RESERVED WHERE id_stock = ? AND reservationToken = ? FOR UPDATE',
+                [id, reservationToken]
+            );
+
+            if (rows.length === 0) {
+                throw new customError(404, 'Reservation not found.');
+            }
+
+            const { product } = rows[0];
+
+            await connection.query(
+                'INSERT INTO SOLD (id_stock, product, reservationToken) VALUES (?, ?, ?)',
+                [id, product, reservationToken]
+            );
+
+            await connection.query(
+                'DELETE FROM RESERVED WHERE id_stock = ? AND reservationToken = ?',
+                [id, reservationToken]
+            );
+
+            await connection.commit();
+        } catch (error) {
+            await connection.rollback();
+            if (error instanceof customError) throw error;
+            throw new customError(500, 'Error selling stock.');
+        } finally {
+            connection.release();
         }
     }
 }

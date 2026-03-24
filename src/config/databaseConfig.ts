@@ -3,4 +3,7 @@ export interface DatabaseConfig {
   user: string;
   password: string;
   database: string;
+  connectionLimit: number;
+  waitForConnections: boolean;
+  queueLimit: number;
 }

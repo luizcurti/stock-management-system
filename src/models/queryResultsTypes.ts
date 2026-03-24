@@ -6,17 +6,9 @@ import { RowDataPacket } from 'mysql2';
 
 export interface SelectProduct extends RowDataPacket {
   id: number;
-}
-
-export interface UpdateProduct extends RowDataPacket {
-  id: number;
-  product: string;
-  qtd: number;
-}
-export interface InsertProduct extends RowDataPacket {
-  id: number;
-  product: string;
-  qtd: number;
+  stock: number;
+  reserve: number;
+  sold: number;
 }
 
 export interface searchStock extends RowDataPacket {
@@ -28,5 +20,11 @@ export interface searchStock extends RowDataPacket {
 export interface searchStockReserve extends RowDataPacket {
   id_stock: number;
   product: string;
-  reservationTokenqtd: string;
+  reservationToken: string;
+}
+
+export interface searchStockSold extends RowDataPacket {
+  id_stock: number;
+  product: string;
+  reservationToken: string;
 }

@@ -1,11 +1,12 @@
-import { Controller, Get, Route, Request, Post, Patch } from 'tsoa';
+import { Body, Controller, Delete, Get, Path, Post, Patch, Route, SuccessResponse } from 'tsoa';
 
-import { Request as ExRequest } from 'express';
 import { ProductService } from '../services/ProductService';
 import {
   responseGetStock,
   responseInsertStockReserve,
   responsePathStock,
+  StockUpdateRequest,
+  ReservationTokenRequest,
 } from '../models/responseTypes';
 
 @Route('/product')
@@ -19,44 +20,60 @@ export class ProductController extends Controller {
    */
   @Patch('/{id}/stock')
   public async patchStock(
-    @Request() request: ExRequest
+    @Path() id: number,
+    @Body() body: StockUpdateRequest
   ): Promise<responsePathStock> {
-    return await this.productService.pathStock(request);
+    return await this.productService.patchStock(id, body);
   }
 
   /**
    * Get stock information for a product
    */
   @Get('/{id}/')
-  public async getStock(
-    @Request() request: ExRequest
-  ): Promise<responseGetStock> {
-    return await this.productService.getStock(request);
+  public async getStock(@Path() id: number): Promise<responseGetStock> {
+    return await this.productService.getStock(id);
   }
 
   /**
    * Reserve a product from stock
    */
+  @SuccessResponse(201, 'Created')
   @Post('/{id}/reserve')
   public async postStockReserve(
-    @Request() request: ExRequest
+    @Path() id: number
   ): Promise<responseInsertStockReserve> {
-    return await this.productService.postStockReserve(request);
+    this.setStatus(201);
+    return await this.productService.postStockReserve(id);
   }
 
   /**
    * Return a reserved product to stock
    */
-  @Post('/{id}/')
-  public async postStock(@Request() request: ExRequest): Promise<void> {
-    return await this.productService.postStock(request);
+  @Post('/{id}/return')
+  public async postStock(
+    @Path() id: number,
+    @Body() body: ReservationTokenRequest
+  ): Promise<void> {
+    return await this.productService.postStock(id, body.reservationToken);
   }
 
   /**
    * Mark a reserved product as sold
    */
   @Post('/{id}/sold')
-  public async postStockSold(@Request() request: ExRequest): Promise<void> {
-    return await this.productService.postStockSold(request);
+  public async postStockSold(
+    @Path() id: number,
+    @Body() body: ReservationTokenRequest
+  ): Promise<void> {
+    return await this.productService.postStockSold(id, body.reservationToken);
+  }
+
+  /**
+   * Delete a product from stock (only if no active reservations or sales history)
+   */
+  @Delete('/{id}')
+  @SuccessResponse(204, 'No Content')
+  public async deleteProduct(@Path() id: number): Promise<void> {
+    return await this.productService.deleteProduct(id);
   }
 }

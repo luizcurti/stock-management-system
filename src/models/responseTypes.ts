@@ -21,12 +21,6 @@ export interface responseInsertStockReserve {
   reservationToken: string;
 }
 
-export interface responseInsertStockSold {
-  id: number;
-  product: string;
-  reservationToken: string;
-}
-
 // Request interfaces for better type safety
 export interface StockUpdateRequest {
   product: string;

@@ -1,11 +1,8 @@
-version: "3.8"
-
 services:
   mysql_database:
     container_name: stock_mysql
     image: mysql:8.4
     command: >
-      --default-authentication-plugin=mysql_native_password
       --character-set-server=utf8mb4
       --collation-server=utf8mb4_unicode_ci
       --sql_mode=STRICT_TRANS_TABLES,NO_ZERO_DATE,NO_ZERO_IN_DATE,ERROR_FOR_DIVISION_BY_ZERO

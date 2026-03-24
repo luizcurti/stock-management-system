@@ -1,264 +1,261 @@
-# Stock Management System 📦
+# Stock Management System
 
-A modern stock management system built with TypeScript, Node.js, Express, and MySQL. It provides complete features to manage inventory, reservations, and sales via a well-structured REST API.
+Inventory management API built with TypeScript, Node.js, Express, and MySQL. Manages stock creation, reservation, sale, return, and deletion through a RESTful interface.
 
-## ✨ Features
+## Tech Stack
 
-- **Inventory Management**: Create, update, and query stock items
-- **Reservation System**: Temporarily reserve items using unique tokens
-- **Sales Tracking**: Record sales with history
-- **Automatic Cleanup**: Automatic removal of expired reservations
-- **RESTful API**: Consistent, well-documented interface
-- **Swagger Docs**: Interactive API documentation
-- **Test Coverage**: Unit tests with Jest and coverage reports
-
-## 🛠️ Tech Stack
-
-- **Backend**: Node.js, TypeScript, Express.js
-- **Database**: MySQL 8.4 with connection pool
-- **Driver**: mysql2 with prepared statements
-- **Documentation**: TSOA + Swagger UI
-- **Tests**: Jest, ts-jest with coverage
+- **Runtime**: Node.js 18+, TypeScript
+- **Framework**: Express.js
+- **Database**: MySQL 8.4 — connection pool, atomic transactions with `SELECT FOR UPDATE`
+- **Driver**: mysql2 with prepared statements (SQL injection safe)
+- **Documentation**: TSOA + Swagger UI (auto-generated)
+- **Tests**: Jest, ts-jest — unit + e2e with real MySQL via Docker
 - **Quality**: ESLint, Prettier
 - **Container**: Docker Compose
-- **Validation**: Custom data validation
 
-## 📋 Prerequisites
+## Prerequisites
 
-Make sure you have the following installed:
+- Node.js >= 18
+- npm >= 8
+- Docker + Docker Compose
 
-- **Node.js** (version 18.0.0 or higher)
-- **npm** (version 8.0.0 or higher)
-- **Docker** and **Docker Compose**
-- **Git**
+## Setup
 
-## 🚀 Setup
-
-### 1. Clone the repository
+### 1. Clone and install
 ```bash
 git clone https://github.com/luizcurti/stock-management-system.git
 cd stock-management-system
-```
-
-### 2. Install dependencies
-```bash
 npm install
 ```
 
-### 3. Configure environment variables
+### 2. Configure environment
 ```bash
-# Copy example file
 cp .env.example .env
-
-# Edit the .env with your settings
-# Default values should work fine for local development
+# Default values work for local development
 ```
 
-### 4. Start the database
+### 3. Start the database
 ```bash
-# Start MySQL container with tables automatically created
 docker-compose up -d
-
-# Check container status
-docker-compose ps
 ```
 
-### 5. Run the application
+### 4. Run the application
 
-#### Development (with hot reload)
 ```bash
+# Development (hot reload)
 npm run dev
+
+# Production
+npm run build && npm start
 ```
 
-#### Production
-```bash
-npm run build
-npm start
-```
+API available at `http://localhost:3000`.
 
-## 📖 API Usage
+## API Reference
 
-The API will be available at `http://localhost:3000` after starting the app.
+Interactive docs at `http://localhost:3000/docs` (requires build).
 
-### Interactive Documentation
-Access Swagger docs at: `http://localhost:3000/docs`
+A ready-to-use Insomnia collection is included at `Insomnia.json`.
 
-### Main Endpoints
+### Endpoints
 
-#### Get Stock
-```bash
-GET /product/{id}/
-```
+| Method | Path | Description |
+|--------|------|-------------|
+| `PATCH` | `/product/:id/stock` | Create or update stock for a product |
+| `GET` | `/product/:id` | Get stock summary (available, reserved, sold) |
+| `POST` | `/product/:id/reserve` | Reserve 1 unit — returns a UUID token |
+| `POST` | `/product/:id/sold` | Confirm sale using reservation token |
+| `POST` | `/product/:id/return` | Return reserved unit back to stock |
+| `DELETE` | `/product/:id` | Delete product (only if no reservations or sales history) |
+| `GET` | `/health` | Health check |
 
-#### Create/Update Stock
-```bash
-PATCH /product/{id}/stock
+### Request / Response examples
+
+#### Create or update stock
+```http
+PATCH /product/5/stock
 Content-Type: application/json
 
-{
-  "product": "Soccer Ball",
-  "qtd": 50
-}
+{ "product": "Volleyball", "qtd": 50 }
+```
+```json
+{ "id": 5, "product": "Volleyball", "stock": 50 }
 ```
 
-#### Reserve Item
-```bash
-POST /product/{id}/reserve
+#### Get stock summary
+```http
+GET /product/5
+```
+```json
+{ "ID": 5, "IN_STOCK": 49, "RESERVE": 1, "SOLD": 3 }
 ```
 
-#### Confirm Sale
-```bash
-POST /product/{id}/sold
+#### Reserve a unit
+```http
+POST /product/5/reserve
+```
+```json
+{ "id": 5, "product": "Volleyball", "reservationToken": "550e8400-e29b-41d4-a716-446655440000" }
+```
+
+#### Confirm sale
+```http
+POST /product/5/sold
 Content-Type: application/json
 
-{
-  "reservationToken": "uuid-token"
-}
+{ "reservationToken": "550e8400-e29b-41d4-a716-446655440000" }
 ```
 
-#### Return Reservation to Stock
-```bash
-POST /product/{id}/
+#### Return reservation to stock
+```http
+POST /product/5/return
 Content-Type: application/json
 
-{
-  "reservationToken": "uuid-token"
-}
+{ "reservationToken": "550e8400-e29b-41d4-a716-446655440000" }
 ```
 
-### Testing with Insomnia/Postman
-The `Insomnia.json` file contains a complete collection of requests.
+#### Delete product
+```http
+DELETE /product/5
+```
+Returns `204 No Content` on success.  
+Returns `409 Conflict` if active reservations or sales history exist.
 
-## 🧪 Testing
+### Error responses
 
-### Run all tests
+| Status | Meaning |
+|--------|---------|
+| `400` | Validation error (invalid ID, empty product name, invalid UUID token) |
+| `404` | Product or reservation not found |
+| `409` | Conflict — cannot delete product with reservations or sales history |
+| `422` | Missing required body fields (validated by TSOA) |
+| `500` | Internal server error |
+
+## Business Flow
+
+```
+ PATCH /stock  →  POST /reserve  →  POST /sold
+                        ↓
+                 POST /return
+```
+
+1. **Create/update stock** — `PATCH /product/:id/stock`
+2. **Reserve** — decrements `IN_STOCK` by 1, records token in `RESERVED`
+3. **Finalize**:
+   - **Sold** — moves token from `RESERVED` to `SOLD` (stock stays decremented)
+   - **Return** — removes token from `RESERVED`, increments `IN_STOCK` back
+4. **Delete** — removes the product from `IN_STOCK` only when no active reservations or sales history exist
+
+All reserve/return/sell/delete operations use database transactions with `SELECT FOR UPDATE` to prevent race conditions.
+
+## Validation Rules
+
+- `id` must be a positive integer
+- `product` must be a non-empty string, max 100 characters
+- `qtd` must be a non-negative integer
+- `reservationToken` must be a valid **UUID v4** string
+
+## Testing
+
+### Unit tests
 ```bash
 npm test
 ```
 
-### Run with coverage
+### E2E tests (requires Docker)
+```bash
+npm run test:e2e
+```
+
+E2E tests spin up a real MySQL instance via Docker Compose and run the full HTTP flow.
+
+### Coverage
 ```bash
 npm run test:coverage
 ```
 
-### Watch mode
-```bash
-npm run test:watch
-```
+Current coverage: **100%** statements / branches / functions / lines.
 
-### Coverage reports
-Reports are generated under `coverage/` and include:
-- HTML report at `coverage/lcov-report/index.html`
-- LCOV report for CI/CD integrations
-
-## 🔧 Available Scripts
+## Scripts
 
 ```bash
-# Development
-npm run dev          # Start with hot reload
-npm run build        # Compile TypeScript
-npm start            # Start in production mode
-
-# Tests
-npm test             # Run tests
-npm run test:watch   # Run tests in watch mode
-npm run test:coverage # Run tests with coverage
-
-# Code Quality
-npm run lint         # Run ESLint and fix issues
-npm run lint:check   # Check issues without fixing
-npm run format       # Format code with Prettier
-
-# Utilities
-npm run clean        # Clean build and coverage artifacts
-npm run restart      # Build and start
+npm run dev            # Development with hot reload
+npm run build          # Compile TypeScript + generate TSOA routes
+npm start              # Start in production mode
+npm test               # Run unit + e2e tests
+npm run test:e2e       # Run e2e tests only
+npm run test:coverage  # Run tests with coverage report
+npm run lint           # ESLint + auto-fix
+npm run lint:check     # ESLint check only
+npm run format         # Prettier format
+npm run clean          # Remove build/ and coverage/
 ```
 
-## 🏗️ Project Structure
+## Project Structure
 
 ```
 stock-management-system/
 ├── src/
-│   ├── config/          # Configuration (database, etc.)
-│   ├── controllers/     # API controllers
-│   ├── services/        # Business logic
-│   ├── repositories/    # Data access layer
-│   ├── models/          # Interfaces and types
-│   └── customErrors/    # Custom error classes
-├── tests/               # Unit tests
-├── SQL/                 # Database scripts
-├── build/               # Compiled files (generated)
-├── coverage/            # Coverage reports (generated)
-└── docs/                # Additional documentation
+│   ├── config/          # Database connection pool
+│   ├── controllers/     # Express route handlers (TSOA)
+│   ├── services/        # Business logic + input validation
+│   ├── repositories/    # SQL queries + transactions
+│   ├── models/          # TypeScript interfaces
+│   └── customErrors/    # Custom error class
+├── tests/
+│   ├── *.spec.ts        # Unit tests
+│   └── e2e/             # End-to-end tests
+├── SQL/
+│   └── stock.sql        # Database schema
+├── build/               # Compiled output (generated)
+└── Insomnia.json        # API collection
 ```
 
-## 🗄️ Database Schema
+## Database Schema
 
-### Table IN_STOCK
 ```sql
 CREATE TABLE `IN_STOCK` (
-  `id` int NOT NULL PRIMARY KEY,
-  `product` varchar(100) NOT NULL,
-  `qtd` int NOT NULL DEFAULT 0,
+  `id`         int NOT NULL PRIMARY KEY,
+  `product`    varchar(100) NOT NULL,
+  `qtd`        int NOT NULL DEFAULT 0,
   `created_at` timestamp DEFAULT CURRENT_TIMESTAMP,
   `updated_at` timestamp DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
-```
 
-### Table RESERVED
-```sql
 CREATE TABLE `RESERVED` (
-  `id` int NOT NULL AUTO_INCREMENT PRIMARY KEY,
-  `id_stock` int NOT NULL,
-  `product` varchar(100) NOT NULL,
+  `id`               int NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `id_stock`         int NOT NULL,
+  `product`          varchar(100) NOT NULL,
   `reservationToken` varchar(100) NOT NULL UNIQUE,
-  `created_at` timestamp DEFAULT CURRENT_TIMESTAMP,
-  `expires_at` timestamp DEFAULT (DATE_ADD(CURRENT_TIMESTAMP, INTERVAL 24 HOUR))
+  `created_at`       timestamp DEFAULT CURRENT_TIMESTAMP,
+  `expires_at`       timestamp DEFAULT (DATE_ADD(CURRENT_TIMESTAMP, INTERVAL 24 HOUR)),
+  FOREIGN KEY (`id_stock`) REFERENCES `IN_STOCK`(`id`) ON DELETE CASCADE
 );
-```
 
-### Table SOLD
-```sql
 CREATE TABLE `SOLD` (
-  `id` int NOT NULL AUTO_INCREMENT PRIMARY KEY,
-  `id_stock` int NOT NULL,
-  `product` varchar(100) NOT NULL,
-  `reservationToken` varchar(100) NOT NULL,
-  `sold_at` timestamp DEFAULT CURRENT_TIMESTAMP
+  `id`               int NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `id_stock`         int NOT NULL,
+  `product`          varchar(100) NOT NULL,
+  `reservationToken` varchar(100) NOT NULL UNIQUE,
+  `sold_at`          timestamp DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (`id_stock`) REFERENCES `IN_STOCK`(`id`)
 );
 ```
 
-## 🔄 Business Flow
+## Troubleshooting
 
-1. **Create/Update Product**: Use `PATCH /product/{id}/stock` to create/update stock
-2. **Reserve**: Use `POST /product/{id}/reserve` to reserve (temporarily decreases stock)
-3. **Finalize**:
-   - `POST /product/{id}/sold` to confirm sale (removes reservation)
-   - `POST /product/{id}/` to return to stock (cancels reservation)
-4. **Auto Cleanup**: Reservations automatically expire in 24h
-
-## 🐛 Troubleshooting
-
-### MySQL connection errors
+**MySQL connection errors**
 ```bash
-# Check if the container is running
-docker-compose ps
-
-# Restart if necessary
-docker-compose down
-docker-compose up -d
+docker-compose ps          # Check container status
+docker-compose down && docker-compose up -d  # Restart
 ```
 
-### Dependency issues
+**Build errors**
 ```bash
-# Clear cache and reinstall
-rm -rf node_modules package-lock.json
-npm install
+npm run clean && npm run build
 ```
 
-### Build errors
+**Reinstall dependencies**
 ```bash
-# Clean build artifacts
-npm run clean
-npm run build
+rm -rf node_modules package-lock.json && npm install
 ```

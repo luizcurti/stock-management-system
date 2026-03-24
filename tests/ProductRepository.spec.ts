@@ -1,6 +1,9 @@
 // Mock the database first
 jest.mock('../src/config/database', () => ({
-    db: { query: jest.fn() }
+    db: {
+        query: jest.fn(),
+        getConnection: jest.fn(),
+    }
 }));
 
 import { ProductRepository } from '../src/repositories/ProductRepository';
@@ -132,86 +135,225 @@ describe('ProductRepository', () => {
         });
     });
 
-    describe('searchStockReserve', () => {
-        it('should return reservation when found', async () => {
-            const mockData = { id_stock: 1, product: 'Ball', reservationToken: 'abc123' };
-            mockQuery.mockResolvedValue([[mockData] as any, []]);
+    // =====================================================
+    // TRANSACTION METHODS
+    // =====================================================
 
-            const result = await repository.searchStockReserve(1, 'abc123');
+    function buildMockConnection() {
+        return {
+            beginTransaction: jest.fn().mockResolvedValue(undefined),
+            commit: jest.fn().mockResolvedValue(undefined),
+            rollback: jest.fn().mockResolvedValue(undefined),
+            release: jest.fn(),
+            query: jest.fn(),
+        };
+    }
 
-            expect(result).toEqual(mockData);
+    describe('reserveStock', () => {
+        it('should reserve stock atomically', async () => {
+            const mockConn = buildMockConnection();
+            (db.getConnection as jest.Mock).mockResolvedValue(mockConn);
+
+            mockConn.query
+                .mockResolvedValueOnce([[{ id: 1, product: 'Ball', qtd: 5 }], []])
+                .mockResolvedValueOnce([{ affectedRows: 1 }, []])
+                .mockResolvedValueOnce([{ affectedRows: 1 }, []]);
+
+            const result = await repository.reserveStock(1, 'uuid-123');
+
+            expect(result).toEqual({ id: 1, product: 'Ball', reservationToken: 'uuid-123' });
+            expect(mockConn.commit).toHaveBeenCalled();
+            expect(mockConn.release).toHaveBeenCalled();
         });
 
-        it('should return null when not found', async () => {
-            mockQuery.mockResolvedValue([[] as any, []]);
-            const result = await repository.searchStockReserve(1, 'abc123');
-            expect(result).toBeNull();
+        it('should rollback and throw when product not found', async () => {
+            const mockConn = buildMockConnection();
+            (db.getConnection as jest.Mock).mockResolvedValue(mockConn);
+            mockConn.query.mockResolvedValueOnce([[], []]);
+
+            await expect(repository.reserveStock(1, 'uuid')).rejects.toThrow('Product not found in stock.');
+            expect(mockConn.rollback).toHaveBeenCalled();
+            expect(mockConn.release).toHaveBeenCalled();
         });
 
-        it('should throw customError on error', async () => {
-            mockQuery.mockRejectedValue(new Error('DB Error'));
-            await expect(repository.searchStockReserve(1, 'abc123')).rejects.toThrow(customError);
-        });
-    });
+        it('should rollback and throw when stock is insufficient', async () => {
+            const mockConn = buildMockConnection();
+            (db.getConnection as jest.Mock).mockResolvedValue(mockConn);
+            mockConn.query.mockResolvedValueOnce([[{ id: 1, product: 'Ball', qtd: 0 }], []]);
 
-    describe('insertStockReserve', () => {
-        it('should insert reservation', async () => {
-            mockQuery.mockResolvedValue([{ affectedRows: 1 } as any, []]);
-
-            const result = await repository.insertStockReserve(1, 'Ball', 'token123');
-
-            expect(result).toEqual({ id: 1, product: 'Ball', reservationToken: 'token123' });
+            await expect(repository.reserveStock(1, 'uuid')).rejects.toThrow('Insufficient stock quantity.');
+            expect(mockConn.rollback).toHaveBeenCalled();
         });
 
-        it('should throw customError on error', async () => {
-            mockQuery.mockRejectedValue(new Error('DB Error'));
-            await expect(repository.insertStockReserve(1, 'Ball', 'token123')).rejects.toThrow(customError);
-        });
-    });
+        it('should rollback and throw generic error on db failure', async () => {
+            const mockConn = buildMockConnection();
+            (db.getConnection as jest.Mock).mockResolvedValue(mockConn);
+            mockConn.query.mockRejectedValueOnce(new Error('DB Error'));
 
-    describe('deleteStockReserve', () => {
-        it('should delete reservation successfully', async () => {
-            mockQuery.mockResolvedValue([{ affectedRows: 1 } as any, []]);
-
-            await expect(repository.deleteStockReserve(1, 'token123')).resolves.toBeUndefined();
-        });
-
-        it('should throw error when no rows affected', async () => {
-            mockQuery.mockResolvedValue([{ affectedRows: 0 } as any, []]);
-            await expect(repository.deleteStockReserve(1, 'token123'))
-                .rejects.toThrow('Reservation not found.');
-        });
-
-        it('should rethrow customError', async () => {
-            const err = new customError(500, 'Delete error');
-            mockQuery.mockRejectedValue(err);
-
-            try {
-                await repository.deleteStockReserve(1, 'token123');
-            } catch (thrownError) {
-                expect(thrownError).toBe(err);
-            }
-        });
-
-        it('should throw customError on general error', async () => {
-            mockQuery.mockRejectedValue(new Error('Delete failed'));
-            await expect(repository.deleteStockReserve(1, 'token123'))
-                .rejects.toThrow('Error deleting data in RESERVED table.');
+            await expect(repository.reserveStock(1, 'uuid')).rejects.toThrow('Error reserving stock.');
+            expect(mockConn.rollback).toHaveBeenCalled();
+            expect(mockConn.release).toHaveBeenCalled();
         });
     });
 
-    describe('insertStockSold', () => {
-        it('should insert sold record', async () => {
-            mockQuery.mockResolvedValue([{ affectedRows: 1 } as any, []]);
+    describe('returnStock', () => {
+        it('should return stock to inventory atomically', async () => {
+            const mockConn = buildMockConnection();
+            (db.getConnection as jest.Mock).mockResolvedValue(mockConn);
 
-            const result = await repository.insertStockSold(1, 'Ball', 'token123');
+            mockConn.query
+                .mockResolvedValueOnce([[{ id_stock: 1, product: 'Ball', reservationToken: 'tok' }], []])
+                .mockResolvedValueOnce([[{ id: 1, product: 'Ball', qtd: 9 }], []])
+                .mockResolvedValueOnce([{ affectedRows: 1 }, []])
+                .mockResolvedValueOnce([{ affectedRows: 1 }, []]);
 
-            expect(result).toEqual({ id: 1, product: 'Ball', reservationToken: 'token123' });
+            await repository.returnStock(1, 'tok');
+
+            expect(mockConn.commit).toHaveBeenCalled();
+            expect(mockConn.release).toHaveBeenCalled();
         });
 
-        it('should throw customError on error', async () => {
-            mockQuery.mockRejectedValue(new Error('DB Error'));
-            await expect(repository.insertStockSold(1, 'Ball', 'token123')).rejects.toThrow(customError);
+        it('should rollback and throw when reservation not found', async () => {
+            const mockConn = buildMockConnection();
+            (db.getConnection as jest.Mock).mockResolvedValue(mockConn);
+            mockConn.query.mockResolvedValueOnce([[], []]);
+
+            await expect(repository.returnStock(1, 'tok')).rejects.toThrow('Reservation not found.');
+            expect(mockConn.rollback).toHaveBeenCalled();
+            expect(mockConn.release).toHaveBeenCalled();
+        });
+
+        it('should rollback and throw when stock row not found', async () => {
+            const mockConn = buildMockConnection();
+            (db.getConnection as jest.Mock).mockResolvedValue(mockConn);
+            mockConn.query
+                .mockResolvedValueOnce([[{ id_stock: 1, product: 'Ball', reservationToken: 'tok' }], []])
+                .mockResolvedValueOnce([[], []]);
+
+            await expect(repository.returnStock(1, 'tok')).rejects.toThrow('Product not found in stock.');
+            expect(mockConn.rollback).toHaveBeenCalled();
+        });
+
+        it('should rollback and throw generic error on db failure', async () => {
+            const mockConn = buildMockConnection();
+            (db.getConnection as jest.Mock).mockResolvedValue(mockConn);
+            mockConn.query.mockRejectedValueOnce(new Error('DB Error'));
+
+            await expect(repository.returnStock(1, 'tok')).rejects.toThrow('Error returning stock.');
+            expect(mockConn.rollback).toHaveBeenCalled();
+        });
+    });
+
+    describe('sellStock', () => {
+        it('should mark reservation as sold atomically', async () => {
+            const mockConn = buildMockConnection();
+            (db.getConnection as jest.Mock).mockResolvedValue(mockConn);
+
+            mockConn.query
+                .mockResolvedValueOnce([[{ id_stock: 1, product: 'Ball', reservationToken: 'tok' }], []])
+                .mockResolvedValueOnce([{ affectedRows: 1 }, []])
+                .mockResolvedValueOnce([{ affectedRows: 1 }, []]);
+
+            await repository.sellStock(1, 'tok');
+
+            expect(mockConn.commit).toHaveBeenCalled();
+            expect(mockConn.release).toHaveBeenCalled();
+        });
+
+        it('should rollback and throw when reservation not found', async () => {
+            const mockConn = buildMockConnection();
+            (db.getConnection as jest.Mock).mockResolvedValue(mockConn);
+            mockConn.query.mockResolvedValueOnce([[], []]);
+
+            await expect(repository.sellStock(1, 'tok')).rejects.toThrow('Reservation not found.');
+            expect(mockConn.rollback).toHaveBeenCalled();
+            expect(mockConn.release).toHaveBeenCalled();
+        });
+
+        it('should rollback and throw generic error on db failure', async () => {
+            const mockConn = buildMockConnection();
+            (db.getConnection as jest.Mock).mockResolvedValue(mockConn);
+            mockConn.query.mockRejectedValueOnce(new Error('DB Error'));
+
+            await expect(repository.sellStock(1, 'tok')).rejects.toThrow('Error selling stock.');
+            expect(mockConn.rollback).toHaveBeenCalled();
+        });
+    });
+
+    describe('deleteStock', () => {
+        it('should delete product with no reservations or sales', async () => {
+            const mockConn = buildMockConnection();
+            (db.getConnection as jest.Mock).mockResolvedValue(mockConn);
+
+            mockConn.query
+                .mockResolvedValueOnce([[] as any, []]) // no reservations
+                .mockResolvedValueOnce([[] as any, []]) // no sold records
+                .mockResolvedValueOnce([{ affectedRows: 1 } as any, []]); // delete ok
+
+            await expect(repository.deleteStock(1)).resolves.toBeUndefined();
+            expect(mockConn.commit).toHaveBeenCalled();
+            expect(mockConn.release).toHaveBeenCalled();
+        });
+
+        it('should throw 409 when active reservations exist', async () => {
+            const mockConn = buildMockConnection();
+            (db.getConnection as jest.Mock).mockResolvedValue(mockConn);
+
+            mockConn.query
+                .mockResolvedValueOnce([[{ id_stock: 1 }] as any, []]); // has reservations
+
+            await expect(repository.deleteStock(1))
+                .rejects.toThrow('Cannot delete product with active reservations.');
+            expect(mockConn.rollback).toHaveBeenCalled();
+            expect(mockConn.release).toHaveBeenCalled();
+        });
+
+        it('should throw 409 when sales history exists', async () => {
+            const mockConn = buildMockConnection();
+            (db.getConnection as jest.Mock).mockResolvedValue(mockConn);
+
+            mockConn.query
+                .mockResolvedValueOnce([[] as any, []]) // no reservations
+                .mockResolvedValueOnce([[{ id_stock: 1 }] as any, []]); // has sold records
+
+            await expect(repository.deleteStock(1))
+                .rejects.toThrow('Cannot delete product with sales history.');
+            expect(mockConn.rollback).toHaveBeenCalled();
+        });
+
+        it('should throw 404 when product not found', async () => {
+            const mockConn = buildMockConnection();
+            (db.getConnection as jest.Mock).mockResolvedValue(mockConn);
+
+            mockConn.query
+                .mockResolvedValueOnce([[] as any, []]) // no reservations
+                .mockResolvedValueOnce([[] as any, []]) // no sold records
+                .mockResolvedValueOnce([{ affectedRows: 0 } as any, []]); // nothing deleted
+
+            await expect(repository.deleteStock(1))
+                .rejects.toThrow('Product not found.');
+            expect(mockConn.rollback).toHaveBeenCalled();
+        });
+
+        it('should rethrow customError without wrapping', async () => {
+            const mockConn = buildMockConnection();
+            (db.getConnection as jest.Mock).mockResolvedValue(mockConn);
+            const err = new customError(409, 'Custom conflict');
+            mockConn.query.mockRejectedValueOnce(err);
+
+            await expect(repository.deleteStock(1)).rejects.toBe(err);
+            expect(mockConn.rollback).toHaveBeenCalled();
+        });
+
+        it('should throw 500 on unexpected database error', async () => {
+            const mockConn = buildMockConnection();
+            (db.getConnection as jest.Mock).mockResolvedValue(mockConn);
+            mockConn.query.mockRejectedValueOnce(new Error('Unexpected DB failure'));
+
+            await expect(repository.deleteStock(1))
+                .rejects.toThrow('Error deleting product from stock.');
+            expect(mockConn.rollback).toHaveBeenCalled();
+            expect(mockConn.release).toHaveBeenCalled();
         });
     });
 });

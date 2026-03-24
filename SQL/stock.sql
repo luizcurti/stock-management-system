@@ -45,9 +45,11 @@ CREATE TABLE `SOLD` (
   `product` varchar(100) NOT NULL,
   `reservationToken` varchar(100) NOT NULL,
   `sold_at` timestamp DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY `uq_sold_reservation_token` (`reservationToken`),
   INDEX `idx_id_stock` (`id_stock`),
   INDEX `idx_reservation_token` (`reservationToken`),
-  INDEX `idx_sold_at` (`sold_at`)
+  INDEX `idx_sold_at` (`sold_at`),
+  FOREIGN KEY (`id_stock`) REFERENCES `IN_STOCK`(`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Insert some sample data for testing (optional)
