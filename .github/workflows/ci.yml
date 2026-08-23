@@ -9,45 +9,105 @@ on:
 permissions:
   contents: read
 
-jobs:
-  build-and-test:
-    runs-on: ubuntu-latest
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
-    strategy:
-      matrix:
-        node-version: [20.x]
+jobs:
+  test:
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js ${{ matrix.node-version }}
+      - name: Setup Node.js 22.x
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node-version }}
+          node-version: 22.x
+          cache: npm
 
       - name: Install dependencies
-        run: |
-          if [ -f package-lock.json ]; then
-            echo "Lock file found -> using npm ci"
-            npm ci
-          else
-            echo "Lock file NOT found -> using npm install"
-            npm install
-          fi
+        run: npm ci
 
-      - name: Lint (no fix)
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Format check
+        run: npm run format:check
+
+      - name: Lint
         run: npm run lint:check
+
+      - name: Unit tests with coverage
+        run: npm run test:coverage
 
       - name: Build
         run: npm run build
 
-      - name: Test with coverage
-        run: npm run test:coverage
+      - name: Typecheck
+        # Runs after build: app.ts imports the TSOA-generated ./build/routes,
+        # which only exists once `npm run build` has generated it.
+        run: npm run typecheck
+
+      - name: E2E tests (real MySQL via Docker Compose)
+        run: npm run test:e2e
+
+      - name: Stop E2E database
+        if: always()
+        run: docker compose down -v
 
       - name: Upload coverage artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-${{ matrix.node-version }}
+          name: coverage
           path: coverage
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build application image
+        run: docker build -t stock-management-system:ci .
+
+      - name: Start full stack (app + MySQL)
+        run: docker compose up -d --build
+
+      - name: Wait for app container to become healthy
+        run: |
+          for i in $(seq 1 30); do
+            health="$(docker inspect --format='{{.State.Health.Status}}' stock_app 2>/dev/null || true)"
+            if [ "$health" = "healthy" ]; then
+              echo "App container is healthy."
+              exit 0
+            fi
+            echo "Waiting for app container to become healthy... ($i/30)"
+            sleep 3
+          done
+          echo "App container did not become healthy in time."
+          exit 1
+
+      - name: Smoke test containerized API
+        run: |
+          set -e
+          curl -sf http://localhost:3000/health
+          echo
+          curl -sf -X PATCH http://localhost:3000/product/1/stock \
+            -H "Content-Type: application/json" \
+            -d '{"product":"CI Smoke Test","qtd":5}'
+          echo
+          curl -sf http://localhost:3000/product/1
+          echo
+
+      - name: Dump container logs on failure
+        if: failure()
+        run: docker compose logs
+
+      - name: Tear down stack
+        if: always()
+        run: docker compose down -v

@@ -59,10 +59,9 @@ coverage/
 # Output of 'npm pack'
 *.tgz
 
-# Yarn Integrity file
+# Yarn Integrity file (this project uses npm; package-lock.json IS committed)
 .yarn-integrity
 yarn.lock
-package-lock.json
 
 # dotenv environment variable files
 .env

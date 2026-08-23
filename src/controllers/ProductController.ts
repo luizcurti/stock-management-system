@@ -1,4 +1,14 @@
-import { Body, Controller, Delete, Get, Path, Post, Patch, Route, SuccessResponse } from 'tsoa';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Path,
+  Post,
+  Patch,
+  Route,
+  SuccessResponse,
+} from '@tsoa/runtime';
 
 import { ProductService } from '../services/ProductService';
 import {

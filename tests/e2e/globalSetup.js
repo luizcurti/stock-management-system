@@ -108,14 +108,14 @@ async function ensureSchema() {
 module.exports = async function globalSetup() {
   console.log('\n[E2E] Starting MySQL via docker compose...');
 
-  const up = spawnSync('docker', ['compose', 'up', '-d'], {
+  const up = spawnSync('docker', ['compose', 'up', '-d', 'mysql_database'], {
     cwd: PROJECT_ROOT,
     stdio: 'inherit',
   });
 
   if (up.status !== 0) {
     // Fallback for older Docker installations
-    const upLegacy = spawnSync('docker-compose', ['up', '-d'], {
+    const upLegacy = spawnSync('docker-compose', ['up', '-d', 'mysql_database'], {
       cwd: PROJECT_ROOT,
       stdio: 'inherit',
     });

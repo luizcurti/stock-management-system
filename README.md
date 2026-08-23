@@ -4,18 +4,32 @@ Inventory management API built with TypeScript, Node.js, Express, and MySQL. Man
 
 ## Tech Stack
 
-- **Runtime**: Node.js 18+, TypeScript
+- **Runtime**: Node.js 22, TypeScript
 - **Framework**: Express.js
 - **Database**: MySQL 8.4 — connection pool, atomic transactions with `SELECT FOR UPDATE`
 - **Driver**: mysql2 with prepared statements (SQL injection safe)
 - **Documentation**: TSOA + Swagger UI (auto-generated)
 - **Tests**: Jest, ts-jest — unit + e2e with real MySQL via Docker
 - **Quality**: ESLint, Prettier
-- **Container**: Docker Compose
+- **Container**: Docker + Docker Compose
+
+## Architecture Overview
+
+Three cohesive layers, no framework beyond what the app needs — no domain/use-case layers, no repository interfaces or DI container, since a single-entity CRUD-plus-transactions API doesn't earn that complexity:
+
+- **Controller** (`src/controllers`) — TSOA-decorated HTTP handlers, thin pass-through to the service.
+- **Service** (`src/services`) — input validation and business rules.
+- **Repository** (`src/repositories`) — SQL queries and transactions against MySQL via `mysql2`.
+
+Reserve/return/sell/delete all run inside a database transaction with `SELECT ... FOR UPDATE` to avoid race conditions when concurrent requests touch the same product.
+
+![Architecture](docs/img/architecture.png)
+
+See [docs/mmd](docs/mmd) for the Mermaid sources and additional diagrams: [business flow](docs/img/business-flow.png), [database schema](docs/img/db-schema.png), and [deployment](docs/img/deployment.png).
 
 ## Prerequisites
 
-- Node.js >= 18
+- Node.js >= 22 (matches CI and the Docker image)
 - npm >= 8
 - Docker + Docker Compose
 
@@ -36,7 +50,7 @@ cp .env.example .env
 
 ### 3. Start the database
 ```bash
-docker-compose up -d
+docker compose up -d mysql_database
 ```
 
 ### 4. Run the application
@@ -50,6 +64,21 @@ npm run build && npm start
 ```
 
 API available at `http://localhost:3000`.
+
+## Environment Variables
+
+See [.env.example](.env.example) for the full list with defaults. Only variables actually read by the app are defined — no speculative configuration:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `DB_HOST` | MySQL host | `localhost` |
+| `DB_PORT` | MySQL port | `3306` |
+| `DB_NAME` | Database name | `stock` |
+| `DB_USER` | Database user | `app_user` |
+| `DB_PASSWORD` | Database password | — |
+| `NODE_ENV` | `development` \| `production` | `development` |
+| `PORT` | HTTP port | `3000` |
+| `ALLOWED_ORIGINS` | Comma-separated CORS origins. Outside production, defaults to `*` when unset; in production, defaults to denying all origins when unset | — |
 
 ## API Reference
 
@@ -157,37 +186,42 @@ All reserve/return/sell/delete operations use database transactions with `SELECT
 
 ## Testing
 
+There is no separate "integration test" tier: the e2e suite below runs the real Express app (in-process, via supertest) against a real MySQL instance, so it already covers both HTTP/API behavior and cross-layer integration without redundant test tiers.
+
 ### Unit tests
+Mock the repository/database layer; cover service validation and business rules, repository SQL/transaction logic, and controllers.
 ```bash
 npm test
 ```
 
-### E2E tests (requires Docker)
+### E2E / API tests (requires Docker)
 ```bash
 npm run test:e2e
 ```
 
-E2E tests spin up a real MySQL instance via Docker Compose and run the full HTTP flow.
+Spins up a real MySQL instance via Docker Compose (`mysql_database` service only) and drives the full HTTP flow with supertest — every endpoint, happy paths, validation errors (400/422), not-found (404), and conflicts (409). A ready-to-use Insomnia collection is also included at [Insomnia.json](Insomnia.json) for manual/exploratory testing.
 
 ### Coverage
 ```bash
 npm run test:coverage
 ```
 
-Current coverage: **100%** statements / branches / functions / lines.
+Current coverage: **100%** statements / branches / functions / lines (unit tests; enforced at a 70% floor in CI).
 
 ## Scripts
 
 ```bash
 npm run dev            # Development with hot reload
-npm run build          # Compile TypeScript + generate TSOA routes
-npm start              # Start in production mode
-npm test               # Run unit + e2e tests
-npm run test:e2e       # Run e2e tests only
-npm run test:coverage  # Run tests with coverage report
+npm run build          # Lint + generate TSOA routes/spec + compile TypeScript
+npm start              # Start in production mode (requires build first)
+npm test               # Run unit tests
+npm run test:e2e       # Run e2e/API tests against real MySQL (Docker)
+npm run test:coverage  # Run unit tests with coverage report
 npm run lint           # ESLint + auto-fix
-npm run lint:check     # ESLint check only
+npm run lint:check     # ESLint check only (used in CI)
 npm run format         # Prettier format
+npm run format:check   # Prettier check only (used in CI)
+npm run typecheck      # tsc --noEmit across src + tests (run `npm run build` first — app.ts imports the generated ./build/routes)
 npm run clean          # Remove build/ and coverage/
 ```
 
@@ -196,7 +230,7 @@ npm run clean          # Remove build/ and coverage/
 ```
 stock-management-system/
 ├── src/
-│   ├── config/          # Database connection pool
+│   ├── config/          # DB pool, env-driven config, Lambda/local entry points
 │   ├── controllers/     # Express route handlers (TSOA)
 │   ├── services/        # Business logic + input validation
 │   ├── repositories/    # SQL queries + transactions
@@ -204,11 +238,16 @@ stock-management-system/
 │   └── customErrors/    # Custom error class
 ├── tests/
 │   ├── *.spec.ts        # Unit tests
-│   └── e2e/             # End-to-end tests
+│   └── e2e/             # End-to-end / API tests
+├── docs/
+│   ├── mmd/          # Mermaid diagram sources
+│   └── img/          # Rendered diagrams
 ├── SQL/
-│   └── stock.sql        # Database schema
-├── build/               # Compiled output (generated)
-└── Insomnia.json        # API collection
+│   └── stock.sql     # Database schema (manual reference / seed data)
+├── Dockerfile         # Multi-stage build for the app image
+├── docker-compose.yml # app + MySQL services
+├── build/             # Compiled output (generated; mirrors src/ + app.ts)
+└── Insomnia.json      # API collection
 ```
 
 ## Database Schema
@@ -242,12 +281,51 @@ CREATE TABLE `SOLD` (
 );
 ```
 
+## Docker
+
+`docker-compose.yml` defines two services: `mysql_database` (MySQL 8.4) and `app` (built from the [Dockerfile](Dockerfile), a multi-stage build that compiles TypeScript in a `build` stage and ships only production dependencies + compiled output in the final image).
+
+```bash
+# Build and start the full stack (app + MySQL)
+docker compose up -d --build
+
+# App available at http://localhost:3000, MySQL at localhost:3306
+curl http://localhost:3000/health
+
+# Stop and remove containers (add -v to also drop the MySQL volume)
+docker compose down
+```
+
+To run only the database (e.g. for local `npm run dev` against a containerized MySQL):
+```bash
+docker compose up -d mysql_database
+```
+
+The `app` service reads its database connection from `DB_HOST=mysql_database` (the Compose service name) and otherwise uses the same environment variables as [.env.example](.env.example), overridable via a `.env` file in the project root (Docker Compose loads it automatically for variable substitution).
+
+## CI
+
+GitHub Actions ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs on every push and pull request to `main`, in two jobs:
+
+1. **test** — install (`npm ci`), `npm audit` on production dependencies (fails on high/critical), format check, lint, typecheck, unit tests with coverage, build, and e2e tests (real MySQL via Docker Compose). Coverage is uploaded as a build artifact.
+2. **docker** (runs after `test` passes) — builds the app image, brings up the full stack with Docker Compose, waits for the app's healthcheck, and smoke-tests the containerized API over HTTP.
+
+The pipeline fails if any step fails — nothing is silently skipped.
+
+## Architectural Decisions
+
+- **Three layers, no more.** Controller → Service → Repository is enough for a single-entity CRUD-plus-transactions API. No domain/use-case layer, no repository interfaces, no DI container — they would add indirection without solving a problem this codebase has.
+- **TSOA over hand-written route glue.** Controllers stay decorator-based; routes, request validation, and the OpenAPI spec are generated from the same source of truth, so they can't drift.
+- **`SELECT ... FOR UPDATE` transactions, not optimistic locking.** Reservation is low-contention per row but must never oversell the last unit; pessimistic row locks inside a transaction are the simplest correct solution here.
+- **`@tsoa/runtime` as the production dependency, `tsoa` (which bundles the `@tsoa/cli` codegen tool) as dev-only.** The CLI is only needed to generate routes/spec at build time; keeping it out of the production `node_modules` tree removes its vulnerable transitive dependency from the deployed image entirely (verified via `npm audit --omit=dev`) without requiring a breaking downgrade.
+- **In-process e2e tests over full HTTP e2e tests.** The e2e suite imports the Express app directly (via supertest) against a real, Dockerized MySQL instance rather than making network calls to a running server. This is faster and avoids port/startup flakiness while still exercising real SQL, real transactions, and real HTTP status/body contracts. A separate Docker-based smoke test in CI covers the "does the container actually start and serve traffic" concern.
+
 ## Troubleshooting
 
 **MySQL connection errors**
 ```bash
-docker-compose ps          # Check container status
-docker-compose down && docker-compose up -d  # Restart
+docker compose ps                     # Check container status
+docker compose down && docker compose up -d mysql_database  # Restart
 ```
 
 **Build errors**
@@ -257,5 +335,5 @@ npm run clean && npm run build
 
 **Reinstall dependencies**
 ```bash
-rm -rf node_modules package-lock.json && npm install
+rm -rf node_modules && npm ci   # package-lock.json is committed — keep it
 ```

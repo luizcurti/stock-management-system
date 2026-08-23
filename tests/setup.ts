@@ -7,11 +7,11 @@ import 'dotenv/config';
 // Suppress console.error during tests to avoid noise unless needed for debugging
 const originalConsoleError = console.error;
 beforeEach(() => {
-    console.error = jest.fn();
+  console.error = jest.fn();
 });
 
 afterEach(() => {
-    console.error = originalConsoleError;
+  console.error = originalConsoleError;
 });
 
 // Global test timeout

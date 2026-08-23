@@ -6,130 +6,157 @@ jest.mock('../src/services/ProductService');
 const mockProductService = new ProductService() as jest.Mocked<ProductService>;
 
 describe('ProductController', () => {
-    let productController: ProductController;
+  let productController: ProductController;
 
-    beforeEach(() => {
-        jest.clearAllMocks();
-        productController = new ProductController(mockProductService);
+  beforeEach(() => {
+    jest.clearAllMocks();
+    productController = new ProductController(mockProductService);
+  });
+
+  describe('constructor', () => {
+    it('should create instance with provided ProductService', () => {
+      const controller = new ProductController(mockProductService);
+      expect(controller).toBeInstanceOf(ProductController);
     });
 
-    describe('constructor', () => {
-        it('should create instance with provided ProductService', () => {
-            const controller = new ProductController(mockProductService);
-            expect(controller).toBeInstanceOf(ProductController);
-        });
+    it('should create instance with default ProductService when none provided', () => {
+      const controller = new ProductController();
+      expect(controller).toBeInstanceOf(ProductController);
+    });
+  });
 
-        it('should create instance with default ProductService when none provided', () => {
-            const controller = new ProductController();
-            expect(controller).toBeInstanceOf(ProductController);
-        });
+  describe('getStock', () => {
+    it('should return stock data successfully', async () => {
+      const expectedResult = { ID: 1, IN_STOCK: 10, RESERVE: 2, SOLD: 5 };
+      mockProductService.getStock.mockResolvedValue(expectedResult);
+
+      const result = await productController.getStock(1);
+
+      expect(mockProductService.getStock).toHaveBeenCalledWith(1);
+      expect(result).toEqual(expectedResult);
     });
 
-    describe('getStock', () => {
-        it('should return stock data successfully', async () => {
-            const expectedResult = { ID: 1, IN_STOCK: 10, RESERVE: 2, SOLD: 5 };
-            mockProductService.getStock.mockResolvedValue(expectedResult);
+    it('should propagate service errors', async () => {
+      const error = new Error('Service error');
+      mockProductService.getStock.mockRejectedValue(error);
 
-            const result = await productController.getStock(1);
+      await expect(productController.getStock(1)).rejects.toThrow(
+        'Service error'
+      );
+    });
+  });
 
-            expect(mockProductService.getStock).toHaveBeenCalledWith(1);
-            expect(result).toEqual(expectedResult);
-        });
+  describe('patchStock', () => {
+    it('should update/create stock successfully', async () => {
+      const expectedResult = { id: 1, product: 'Ball', stock: 200 };
+      mockProductService.patchStock.mockResolvedValue(expectedResult);
 
-        it('should propagate service errors', async () => {
-            const error = new Error('Service error');
-            mockProductService.getStock.mockRejectedValue(error);
+      const result = await productController.patchStock(1, {
+        product: 'Ball',
+        qtd: 200,
+      });
 
-            await expect(productController.getStock(1)).rejects.toThrow('Service error');
-        });
+      expect(mockProductService.patchStock).toHaveBeenCalledWith(1, {
+        product: 'Ball',
+        qtd: 200,
+      });
+      expect(result).toEqual(expectedResult);
     });
 
-    describe('patchStock', () => {
-        it('should update/create stock successfully', async () => {
-            const expectedResult = { id: 1, product: 'Ball', stock: 200 };
-            mockProductService.patchStock.mockResolvedValue(expectedResult);
+    it('should propagate service errors', async () => {
+      const error = new Error('Service error');
+      mockProductService.patchStock.mockRejectedValue(error);
 
-            const result = await productController.patchStock(1, { product: 'Ball', qtd: 200 });
+      await expect(
+        productController.patchStock(1, { product: 'Ball', qtd: 200 })
+      ).rejects.toThrow('Service error');
+    });
+  });
 
-            expect(mockProductService.patchStock).toHaveBeenCalledWith(1, { product: 'Ball', qtd: 200 });
-            expect(result).toEqual(expectedResult);
-        });
+  describe('postStockReserve', () => {
+    it('should reserve stock successfully', async () => {
+      const expectedResult = {
+        id: 1,
+        product: 'Ball',
+        reservationToken: 'uuid-123',
+      };
+      mockProductService.postStockReserve.mockResolvedValue(expectedResult);
 
-        it('should propagate service errors', async () => {
-            const error = new Error('Service error');
-            mockProductService.patchStock.mockRejectedValue(error);
+      const result = await productController.postStockReserve(1);
 
-            await expect(productController.patchStock(1, { product: 'Ball', qtd: 200 })).rejects.toThrow('Service error');
-        });
+      expect(mockProductService.postStockReserve).toHaveBeenCalledWith(1);
+      expect(result).toEqual(expectedResult);
     });
 
-    describe('postStockReserve', () => {
-        it('should reserve stock successfully', async () => {
-            const expectedResult = { id: 1, product: 'Ball', reservationToken: 'uuid-123' };
-            mockProductService.postStockReserve.mockResolvedValue(expectedResult);
+    it('should propagate service errors', async () => {
+      const error = new Error('Service error');
+      mockProductService.postStockReserve.mockRejectedValue(error);
 
-            const result = await productController.postStockReserve(1);
+      await expect(productController.postStockReserve(1)).rejects.toThrow(
+        'Service error'
+      );
+    });
+  });
 
-            expect(mockProductService.postStockReserve).toHaveBeenCalledWith(1);
-            expect(result).toEqual(expectedResult);
-        });
+  describe('postStock', () => {
+    it('should return reserved product to stock successfully', async () => {
+      mockProductService.postStock.mockResolvedValue();
 
-        it('should propagate service errors', async () => {
-            const error = new Error('Service error');
-            mockProductService.postStockReserve.mockRejectedValue(error);
+      await productController.postStock(1, { reservationToken: 'token-abc' });
 
-            await expect(productController.postStockReserve(1)).rejects.toThrow('Service error');
-        });
+      expect(mockProductService.postStock).toHaveBeenCalledWith(1, 'token-abc');
     });
 
-    describe('postStock', () => {
-        it('should return reserved product to stock successfully', async () => {
-            mockProductService.postStock.mockResolvedValue();
+    it('should propagate service errors', async () => {
+      const error = new Error('Service error');
+      mockProductService.postStock.mockRejectedValue(error);
 
-            await productController.postStock(1, { reservationToken: 'token-abc' });
+      await expect(
+        productController.postStock(1, { reservationToken: 'token-abc' })
+      ).rejects.toThrow('Service error');
+    });
+  });
 
-            expect(mockProductService.postStock).toHaveBeenCalledWith(1, 'token-abc');
-        });
+  describe('postStockSold', () => {
+    it('should mark stock as sold successfully', async () => {
+      mockProductService.postStockSold.mockResolvedValue();
 
-        it('should propagate service errors', async () => {
-            const error = new Error('Service error');
-            mockProductService.postStock.mockRejectedValue(error);
+      await productController.postStockSold(1, {
+        reservationToken: 'token-abc',
+      });
 
-            await expect(productController.postStock(1, { reservationToken: 'token-abc' })).rejects.toThrow('Service error');
-        });
+      expect(mockProductService.postStockSold).toHaveBeenCalledWith(
+        1,
+        'token-abc'
+      );
     });
 
-    describe('postStockSold', () => {
-        it('should mark stock as sold successfully', async () => {
-            mockProductService.postStockSold.mockResolvedValue();
+    it('should propagate service errors', async () => {
+      const error = new Error('Service error');
+      mockProductService.postStockSold.mockRejectedValue(error);
 
-            await productController.postStockSold(1, { reservationToken: 'token-abc' });
+      await expect(
+        productController.postStockSold(1, { reservationToken: 'token-abc' })
+      ).rejects.toThrow('Service error');
+    });
+  });
 
-            expect(mockProductService.postStockSold).toHaveBeenCalledWith(1, 'token-abc');
-        });
+  describe('deleteProduct', () => {
+    it('should delete product successfully', async () => {
+      mockProductService.deleteProduct.mockResolvedValue();
 
-        it('should propagate service errors', async () => {
-            const error = new Error('Service error');
-            mockProductService.postStockSold.mockRejectedValue(error);
+      await productController.deleteProduct(1);
 
-            await expect(productController.postStockSold(1, { reservationToken: 'token-abc' })).rejects.toThrow('Service error');
-        });
+      expect(mockProductService.deleteProduct).toHaveBeenCalledWith(1);
     });
 
-    describe('deleteProduct', () => {
-        it('should delete product successfully', async () => {
-            mockProductService.deleteProduct.mockResolvedValue();
+    it('should propagate service errors', async () => {
+      const error = new Error('Service error');
+      mockProductService.deleteProduct.mockRejectedValue(error);
 
-            await productController.deleteProduct(1);
-
-            expect(mockProductService.deleteProduct).toHaveBeenCalledWith(1);
-        });
-
-        it('should propagate service errors', async () => {
-            const error = new Error('Service error');
-            mockProductService.deleteProduct.mockRejectedValue(error);
-
-            await expect(productController.deleteProduct(1)).rejects.toThrow('Service error');
-        });
+      await expect(productController.deleteProduct(1)).rejects.toThrow(
+        'Service error'
+      );
     });
+  });
 });

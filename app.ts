@@ -5,7 +5,7 @@ import bodyParser from 'body-parser';
 import { RegisterRoutes } from './build/routes';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
-import { ValidateError } from 'tsoa';
+import { ValidateError } from '@tsoa/runtime';
 import { customError } from './src/customErrors/customErrors';
 
 export const app = express();

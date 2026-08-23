@@ -14,7 +14,9 @@ module.exports.handler = serverless(app, {
     if (evt.requestContext && typeof evt.requestContext === 'object') {
       const requestContext = evt.requestContext as Record<string, unknown>;
       if (requestContext.authorizer) {
-        req.claims = (requestContext.authorizer as Record<string, unknown>).claims;
+        req.claims = (
+          requestContext.authorizer as Record<string, unknown>
+        ).claims;
       }
     }
   },

@@ -328,15 +328,26 @@ describe('Product API — E2E', () => {
 
     beforeAll(async () => {
       // Produto sem histórico — será deletado com sucesso
-      await api.patch(`/product/${freshId}/stock`).send({ product: 'DeleteMe', qtd: 5 }).expect(200);
+      await api
+        .patch(`/product/${freshId}/stock`)
+        .send({ product: 'DeleteMe', qtd: 5 })
+        .expect(200);
 
       // Produto com reserva activa
-      await api.patch(`/product/${reservedId}/stock`).send({ product: 'HasReserve', qtd: 5 }).expect(200);
+      await api
+        .patch(`/product/${reservedId}/stock`)
+        .send({ product: 'HasReserve', qtd: 5 })
+        .expect(200);
       await api.post(`/product/${reservedId}/reserve`).expect(201);
 
       // Produto com histórico de vendas
-      await api.patch(`/product/${soldId}/stock`).send({ product: 'HasSold', qtd: 5 }).expect(200);
-      const resReserve = await api.post(`/product/${soldId}/reserve`).expect(201);
+      await api
+        .patch(`/product/${soldId}/stock`)
+        .send({ product: 'HasSold', qtd: 5 })
+        .expect(200);
+      const resReserve = await api
+        .post(`/product/${soldId}/reserve`)
+        .expect(201);
       await api
         .post(`/product/${soldId}/sold`)
         .send({ reservationToken: resReserve.body.reservationToken })
