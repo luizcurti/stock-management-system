@@ -1,6 +1,6 @@
 # Stock Management System
 
-Inventory management API built with TypeScript, Node.js, Express, and MySQL. Manages stock creation, reservation, sale, return, and deletion through a RESTful interface.
+Every stock change — reserve, sell, return, delete — runs inside a `SELECT ... FOR UPDATE` transaction, so concurrent requests on the same product can't race each other. A deliberately three-layer inventory API (no Clean Architecture, no DI container — a single-entity CRUD-plus-transactions domain doesn't earn that complexity) in TypeScript, Express, and MySQL.
 
 ## Tech Stack
 
