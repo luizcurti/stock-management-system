@@ -51,6 +51,15 @@ jobs:
         run: npm run typecheck
 
       - name: E2E tests (real MySQL via Docker Compose)
+        # No .env file exists in CI (it's gitignored), so the app's DB pool
+        # (src/config/database.ts) needs these explicitly — they must match
+        # the docker-compose.yml fallback defaults (DB_USER/DB_PASSWORD).
+        env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_USER: app_user
+          DB_PASSWORD: root
+          DB_NAME: stock_test
         run: npm run test:e2e
 
       - name: Stop E2E database
