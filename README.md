@@ -4,7 +4,7 @@ Every stock change — reserve, sell, return, delete — runs inside a `SELECT .
 
 ## Tech Stack
 
-- **Runtime**: Node.js 22, TypeScript
+- **Runtime**: Node.js 24, TypeScript
 - **Framework**: Express.js
 - **Database**: MySQL 8.4 — connection pool, atomic transactions with `SELECT FOR UPDATE`
 - **Driver**: mysql2 with prepared statements (SQL injection safe)
@@ -29,7 +29,7 @@ See [docs/mmd](docs/mmd) for the Mermaid sources and additional diagrams: [busin
 
 ## Prerequisites
 
-- Node.js >= 22 (matches CI and the Docker image)
+- Node.js >= 24 (matches CI and the Docker image)
 - npm >= 8
 - Docker + Docker Compose
 
