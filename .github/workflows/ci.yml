@@ -16,6 +16,9 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/stock-service
 
     steps:
       - name: Checkout repository
@@ -26,6 +29,7 @@ jobs:
         with:
           node-version: 24.x
           cache: npm
+          cache-dependency-path: services/stock-service/package-lock.json
 
       - name: Install dependencies
         run: npm ci
@@ -65,13 +69,14 @@ jobs:
       - name: Stop E2E database
         if: always()
         run: docker compose down -v
+        working-directory: ${{ github.workspace }}
 
       - name: Upload coverage artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: coverage
-          path: coverage
+          path: services/stock-service/coverage
 
   docker:
     runs-on: ubuntu-latest
@@ -81,42 +86,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Build application image
-        run: docker build -t stock-management-system:ci .
-
-      - name: Start full stack (app + MySQL)
-        run: docker compose up -d --build
-
-      - name: Wait for app container to become healthy
-        run: |
-          for i in $(seq 1 30); do
-            health="$(docker inspect --format='{{.State.Health.Status}}' stock_app 2>/dev/null || true)"
-            if [ "$health" = "healthy" ]; then
-              echo "App container is healthy."
-              exit 0
-            fi
-            echo "Waiting for app container to become healthy... ($i/30)"
-            sleep 3
-          done
-          echo "App container did not become healthy in time."
-          exit 1
-
-      - name: Smoke test containerized API
-        run: |
-          set -e
-          curl -sf http://localhost:3000/health
-          echo
-          curl -sf -X PATCH http://localhost:3000/product/1/stock \
-            -H "Content-Type: application/json" \
-            -d '{"product":"CI Smoke Test","qtd":5}'
-          echo
-          curl -sf http://localhost:3000/product/1
-          echo
-
-      - name: Dump container logs on failure
-        if: failure()
-        run: docker compose logs
-
-      - name: Tear down stack
-        if: always()
-        run: docker compose down -v
+      # Builds and starts all three services + MySQL, waits for all of them
+      # to report healthy, and exercises the full order -> stock -> payment
+      # chain over real HTTP (happy path, payment decline releasing the
+      # reservation, insufficient stock, and concurrent orders never
+      # overselling). Tears itself down (and dumps container logs first on
+      # failure) regardless of outcome.
+      - name: Whole-stack integration test (docker compose)
+        run: scripts/integration-test.sh

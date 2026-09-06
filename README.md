@@ -1,339 +1,64 @@
-# Stock Management System
+# stock-reservation-service
 
-Every stock change — reserve, sell, return, delete — runs inside a `SELECT ... FOR UPDATE` transaction, so concurrent requests on the same product can't race each other. A deliberately three-layer inventory API (no Clean Architecture, no DI container — a single-entity CRUD-plus-transactions domain doesn't earn that complexity) in TypeScript, Express, and MySQL.
+A stock reservation system built as three services, to demonstrate the two things that matter once you cross from "one API" to "microservices": correct concurrency handling inside a service, and correct traffic behavior *between* services.
 
-## Tech Stack
+- **[stock-service](services/stock-service/)** — the core: reserve/sell/return inventory with `SELECT ... FOR UPDATE` transactions, so concurrent requests on the same product can't oversell it. TypeScript, Express, MySQL. See its own [README](services/stock-service/README.md) for the full API reference.
+- **order-service** — orchestrates an order: reserve stock → charge payment → confirm the sale (or release the reservation if payment fails). A minimal in-memory stub — it exists to be a realistic synchronous caller, not a production order system.
+- **payment-service** — a fake payment authorizer with a `CHAOS_MODE` toggle (`off` / `flaky` / `fail` / `slow`) for exercising failure handling on demand. Also a minimal in-memory stub.
 
-- **Runtime**: Node.js 24, TypeScript
-- **Framework**: Express.js
-- **Database**: MySQL 8.4 — connection pool, atomic transactions with `SELECT FOR UPDATE`
-- **Driver**: mysql2 with prepared statements (SQL injection safe)
-- **Documentation**: TSOA + Swagger UI (auto-generated)
-- **Tests**: Jest, ts-jest — unit + e2e with real MySQL via Docker
-- **Quality**: ESLint, Prettier
-- **Container**: Docker + Docker Compose
+The three talk to each other over real HTTP, which is what makes the [Kubernetes + Istio service mesh demo](docs/mesh.md) meaningful: mTLS, retries/timeouts, canary releases, and circuit breaking only do something once there's inter-service traffic for them to act on.
 
-## Architecture Overview
+## Running it
 
-Three cohesive layers, no framework beyond what the app needs — no domain/use-case layers, no repository interfaces or DI container, since a single-entity CRUD-plus-transactions API doesn't earn that complexity:
-
-- **Controller** (`src/controllers`) — TSOA-decorated HTTP handlers, thin pass-through to the service.
-- **Service** (`src/services`) — input validation and business rules.
-- **Repository** (`src/repositories`) — SQL queries and transactions against MySQL via `mysql2`.
-
-Reserve/return/sell/delete all run inside a database transaction with `SELECT ... FOR UPDATE` to avoid race conditions when concurrent requests touch the same product.
-
-![Architecture](docs/img/architecture.png)
-
-See [docs/mmd](docs/mmd) for the Mermaid sources and additional diagrams: [business flow](docs/img/business-flow.png), [database schema](docs/img/db-schema.png), and [deployment](docs/img/deployment.png).
-
-## Prerequisites
-
-- Node.js >= 24 (matches CI and the Docker image)
-- npm >= 8
-- Docker + Docker Compose
-
-## Setup
-
-### 1. Clone and install
+**Just the API, for local development** (no mesh, no Kubernetes):
 ```bash
-git clone https://github.com/luizcurti/stock-management-system.git
-cd stock-management-system
-npm install
-```
-
-### 2. Configure environment
-```bash
-cp .env.example .env
-# Default values work for local development
-```
-
-### 3. Start the database
-```bash
-docker compose up -d mysql_database
-```
-
-### 4. Run the application
-
-```bash
-# Development (hot reload)
-npm run dev
-
-# Production
-npm run build && npm start
-```
-
-API available at `http://localhost:3000`.
-
-## Environment Variables
-
-See [.env.example](.env.example) for the full list with defaults. Only variables actually read by the app are defined — no speculative configuration:
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `DB_HOST` | MySQL host | `localhost` |
-| `DB_PORT` | MySQL port | `3306` |
-| `DB_NAME` | Database name | `stock` |
-| `DB_USER` | Database user | `app_user` |
-| `DB_PASSWORD` | Database password | — |
-| `NODE_ENV` | `development` \| `production` | `development` |
-| `PORT` | HTTP port | `3000` |
-| `ALLOWED_ORIGINS` | Comma-separated CORS origins. Outside production, defaults to `*` when unset; in production, defaults to denying all origins when unset | — |
-
-## API Reference
-
-Interactive docs at `http://localhost:3000/docs` (requires build).
-
-A ready-to-use Insomnia collection is included at `Insomnia.json`.
-
-### Endpoints
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `PATCH` | `/product/:id/stock` | Create or update stock for a product |
-| `GET` | `/product/:id` | Get stock summary (available, reserved, sold) |
-| `POST` | `/product/:id/reserve` | Reserve 1 unit — returns a UUID token |
-| `POST` | `/product/:id/sold` | Confirm sale using reservation token |
-| `POST` | `/product/:id/return` | Return reserved unit back to stock |
-| `DELETE` | `/product/:id` | Delete product (only if no reservations or sales history) |
-| `GET` | `/health` | Health check |
-
-### Request / Response examples
-
-#### Create or update stock
-```http
-PATCH /product/5/stock
-Content-Type: application/json
-
-{ "product": "Volleyball", "qtd": 50 }
-```
-```json
-{ "id": 5, "product": "Volleyball", "stock": 50 }
-```
-
-#### Get stock summary
-```http
-GET /product/5
-```
-```json
-{ "ID": 5, "IN_STOCK": 49, "RESERVE": 1, "SOLD": 3 }
-```
-
-#### Reserve a unit
-```http
-POST /product/5/reserve
-```
-```json
-{ "id": 5, "product": "Volleyball", "reservationToken": "550e8400-e29b-41d4-a716-446655440000" }
-```
-
-#### Confirm sale
-```http
-POST /product/5/sold
-Content-Type: application/json
-
-{ "reservationToken": "550e8400-e29b-41d4-a716-446655440000" }
-```
-
-#### Return reservation to stock
-```http
-POST /product/5/return
-Content-Type: application/json
-
-{ "reservationToken": "550e8400-e29b-41d4-a716-446655440000" }
-```
-
-#### Delete product
-```http
-DELETE /product/5
-```
-Returns `204 No Content` on success.  
-Returns `409 Conflict` if active reservations or sales history exist.
-
-### Error responses
-
-| Status | Meaning |
-|--------|---------|
-| `400` | Validation error (invalid ID, empty product name, invalid UUID token) |
-| `404` | Product or reservation not found |
-| `409` | Conflict — cannot delete product with reservations or sales history |
-| `422` | Missing required body fields (validated by TSOA) |
-| `500` | Internal server error |
-
-## Business Flow
-
-```
- PATCH /stock  →  POST /reserve  →  POST /sold
-                        ↓
-                 POST /return
-```
-
-1. **Create/update stock** — `PATCH /product/:id/stock`
-2. **Reserve** — decrements `IN_STOCK` by 1, records token in `RESERVED`
-3. **Finalize**:
-   - **Sold** — moves token from `RESERVED` to `SOLD` (stock stays decremented)
-   - **Return** — removes token from `RESERVED`, increments `IN_STOCK` back
-4. **Delete** — removes the product from `IN_STOCK` only when no active reservations or sales history exist
-
-All reserve/return/sell/delete operations use database transactions with `SELECT FOR UPDATE` to prevent race conditions.
-
-## Validation Rules
-
-- `id` must be a positive integer
-- `product` must be a non-empty string, max 100 characters
-- `qtd` must be a non-negative integer
-- `reservationToken` must be a valid **UUID v4** string
-
-## Testing
-
-There is no separate "integration test" tier: the e2e suite below runs the real Express app (in-process, via supertest) against a real MySQL instance, so it already covers both HTTP/API behavior and cross-layer integration without redundant test tiers.
-
-### Unit tests
-Mock the repository/database layer; cover service validation and business rules, repository SQL/transaction logic, and controllers.
-```bash
-npm test
-```
-
-### E2E / API tests (requires Docker)
-```bash
-npm run test:e2e
-```
-
-Spins up a real MySQL instance via Docker Compose (`mysql_database` service only) and drives the full HTTP flow with supertest — every endpoint, happy paths, validation errors (400/422), not-found (404), and conflicts (409). A ready-to-use Insomnia collection is also included at [Insomnia.json](Insomnia.json) for manual/exploratory testing.
-
-### Coverage
-```bash
-npm run test:coverage
-```
-
-Current coverage: **100%** statements / branches / functions / lines (unit tests; enforced at a 70% floor in CI).
-
-## Scripts
-
-```bash
-npm run dev            # Development with hot reload
-npm run build          # Lint + generate TSOA routes/spec + compile TypeScript
-npm start              # Start in production mode (requires build first)
-npm test               # Run unit tests
-npm run test:e2e       # Run e2e/API tests against real MySQL (Docker)
-npm run test:coverage  # Run unit tests with coverage report
-npm run lint           # ESLint + auto-fix
-npm run lint:check     # ESLint check only (used in CI)
-npm run format         # Prettier format
-npm run format:check   # Prettier check only (used in CI)
-npm run typecheck      # tsc --noEmit across src + tests (run `npm run build` first — app.ts imports the generated ./build/routes)
-npm run clean          # Remove build/ and coverage/
-```
-
-## Project Structure
-
-```
-stock-management-system/
-├── src/
-│   ├── config/          # DB pool, env-driven config, Lambda/local entry points
-│   ├── controllers/     # Express route handlers (TSOA)
-│   ├── services/        # Business logic + input validation
-│   ├── repositories/    # SQL queries + transactions
-│   ├── models/          # TypeScript interfaces
-│   └── customErrors/    # Custom error class
-├── tests/
-│   ├── *.spec.ts        # Unit tests
-│   └── e2e/             # End-to-end / API tests
-├── docs/
-│   ├── mmd/          # Mermaid diagram sources
-│   └── img/          # Rendered diagrams
-├── SQL/
-│   └── stock.sql     # Database schema (manual reference / seed data)
-├── Dockerfile         # Multi-stage build for the app image
-├── docker-compose.yml # app + MySQL services
-├── build/             # Compiled output (generated; mirrors src/ + app.ts)
-└── Insomnia.json      # API collection
-```
-
-## Database Schema
-
-```sql
-CREATE TABLE `IN_STOCK` (
-  `id`         int NOT NULL PRIMARY KEY,
-  `product`    varchar(100) NOT NULL,
-  `qtd`        int NOT NULL DEFAULT 0,
-  `created_at` timestamp DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` timestamp DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-);
-
-CREATE TABLE `RESERVED` (
-  `id`               int NOT NULL AUTO_INCREMENT PRIMARY KEY,
-  `id_stock`         int NOT NULL,
-  `product`          varchar(100) NOT NULL,
-  `reservationToken` varchar(100) NOT NULL UNIQUE,
-  `created_at`       timestamp DEFAULT CURRENT_TIMESTAMP,
-  `expires_at`       timestamp DEFAULT (DATE_ADD(CURRENT_TIMESTAMP, INTERVAL 24 HOUR)),
-  FOREIGN KEY (`id_stock`) REFERENCES `IN_STOCK`(`id`) ON DELETE CASCADE
-);
-
-CREATE TABLE `SOLD` (
-  `id`               int NOT NULL AUTO_INCREMENT PRIMARY KEY,
-  `id_stock`         int NOT NULL,
-  `product`          varchar(100) NOT NULL,
-  `reservationToken` varchar(100) NOT NULL UNIQUE,
-  `sold_at`          timestamp DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (`id_stock`) REFERENCES `IN_STOCK`(`id`)
-);
-```
-
-## Docker
-
-`docker-compose.yml` defines two services: `mysql_database` (MySQL 8.4) and `app` (built from the [Dockerfile](Dockerfile), a multi-stage build that compiles TypeScript in a `build` stage and ships only production dependencies + compiled output in the final image).
-
-```bash
-# Build and start the full stack (app + MySQL)
 docker compose up -d --build
+curl http://localhost:3000/health   # stock-service
+curl http://localhost:3001/health   # order-service
+curl http://localhost:3002/health   # payment-service
 
-# App available at http://localhost:3000, MySQL at localhost:3306
-curl http://localhost:3000/health
-
-# Stop and remove containers (add -v to also drop the MySQL volume)
-docker compose down
+curl -X POST http://localhost:3001/orders \
+  -H "Content-Type: application/json" -d '{"productId":1}'
 ```
+See [services/stock-service/README.md](services/stock-service/README.md) for the full stock-service API, environment variables, and test suite.
 
-To run only the database (e.g. for local `npm run dev` against a containerized MySQL):
+To verify the whole stack end to end (not just stock-service in isolation) — happy path, payment decline releasing the reservation, insufficient stock, and concurrent orders never overselling, all driven over real HTTP through order-service:
 ```bash
-docker compose up -d mysql_database
+scripts/integration-test.sh
 ```
 
-The `app` service reads its database connection from `DB_HOST=mysql_database` (the Compose service name) and otherwise uses the same environment variables as [.env.example](.env.example), overridable via a `.env` file in the project root (Docker Compose loads it automatically for variable substitution).
+**The full Kubernetes + Istio mesh demo** — mTLS, retry/timeout policies, a 90/10 canary release, circuit breaking, and Kiali/Grafana observability, all running on a local [kind](https://kind.sigs.k8s.io/) cluster:
+```bash
+scripts/mesh/kind-up.sh
+scripts/mesh/build-and-load.sh
+scripts/mesh/deploy.sh
+scripts/mesh/demo-canary.sh
+```
+Full walkthrough, one section per capability with the exact YAML responsible and the command to see it live: **[docs/mesh.md](docs/mesh.md)**.
+
+## Repository structure
+
+```
+stock-reservation-service/
+├── services/
+│   ├── stock-service/     # the core inventory API (see its own README)
+│   ├── order-service/     # order orchestration stub
+│   └── payment-service/   # fake payment authorizer stub
+├── deploy/
+│   ├── k8s/                # namespace, MySQL, and Deployments/Services for all three
+│   └── istio/               # PeerAuthentication, DestinationRules, VirtualServices, Gateway
+├── scripts/
+│   ├── mesh/                 # kind/Istio automation — cluster up, build, deploy, and demo scripts
+│   └── integration-test.sh   # whole-stack HTTP integration test (docker compose)
+├── docs/                    # architecture diagrams + the mesh demo walkthrough
+└── docker-compose.yml       # all three services + MySQL, for local dev without Kubernetes
+```
 
 ## CI
 
-GitHub Actions ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs on every push and pull request to `main`, in two jobs:
+GitHub Actions ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs on every push/PR to `main`, in two jobs:
 
-1. **test** — install (`npm ci`), `npm audit` on production dependencies (fails on high/critical), format check, lint, typecheck, unit tests with coverage, build, and e2e tests (real MySQL via Docker Compose). Coverage is uploaded as a build artifact.
-2. **docker** (runs after `test` passes) — builds the app image, brings up the full stack with Docker Compose, waits for the app's healthcheck, and smoke-tests the containerized API over HTTP.
+1. **test** — lints, typechecks, and unit-tests `stock-service` (100% coverage), then runs its e2e suite against real MySQL.
+2. **docker** — builds and starts all three services + MySQL via `docker compose`, then runs [`scripts/integration-test.sh`](scripts/integration-test.sh) against the live stack: happy path, payment decline releasing the reservation, insufficient stock, and concurrent orders never overselling — all driven over real HTTP through `order-service`.
 
-The pipeline fails if any step fails — nothing is silently skipped.
-
-## Architectural Decisions
-
-- **Three layers, no more.** Controller → Service → Repository is enough for a single-entity CRUD-plus-transactions API. No domain/use-case layer, no repository interfaces, no DI container — they would add indirection without solving a problem this codebase has.
-- **TSOA over hand-written route glue.** Controllers stay decorator-based; routes, request validation, and the OpenAPI spec are generated from the same source of truth, so they can't drift.
-- **`SELECT ... FOR UPDATE` transactions, not optimistic locking.** Reservation is low-contention per row but must never oversell the last unit; pessimistic row locks inside a transaction are the simplest correct solution here.
-- **`@tsoa/runtime` as the production dependency, `tsoa` (which bundles the `@tsoa/cli` codegen tool) as dev-only.** The CLI is only needed to generate routes/spec at build time; keeping it out of the production `node_modules` tree removes its vulnerable transitive dependency from the deployed image entirely (verified via `npm audit --omit=dev`) without requiring a breaking downgrade.
-- **In-process e2e tests over full HTTP e2e tests.** The e2e suite imports the Express app directly (via supertest) against a real, Dockerized MySQL instance rather than making network calls to a running server. This is faster and avoids port/startup flakiness while still exercising real SQL, real transactions, and real HTTP status/body contracts. A separate Docker-based smoke test in CI covers the "does the container actually start and serve traffic" concern.
-
-## Troubleshooting
-
-**MySQL connection errors**
-```bash
-docker compose ps                     # Check container status
-docker compose down && docker compose up -d mysql_database  # Restart
-```
-
-**Build errors**
-```bash
-npm run clean && npm run build
-```
-
-**Reinstall dependencies**
-```bash
-rm -rf node_modules && npm ci   # package-lock.json is committed — keep it
-```
+The Kubernetes/Istio mesh demo is intentionally not part of CI — it's a local demo environment (see [docs/mesh.md](docs/mesh.md)'s [Scope and honesty](docs/mesh.md#scope-and-honesty) section), not a deployed system.

@@ -6,7 +6,8 @@ const mysql2 = require('mysql2/promise');
 
 require('dotenv').config({ path: path.resolve(__dirname, '../../.env') });
 
-const PROJECT_ROOT = path.resolve(__dirname, '../..');
+// docker-compose.yml lives at the repo root (services/stock-service is one level below it)
+const PROJECT_ROOT = path.resolve(__dirname, '../../../..');
 
 // For schema management, always connect as root (root can CREATE DATABASE and GRANT)
 const ROOT_CONFIG = {

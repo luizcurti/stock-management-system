@@ -10,6 +10,14 @@ import { customError } from './src/customErrors/customErrors';
 
 export const app = express();
 
+// Identifies which deployed version answered — used by the Istio canary demo
+// to prove the 90/10 traffic split (deploy/istio/virtualservice-stock.yaml).
+const SERVICE_VERSION = process.env.SERVICE_VERSION || 'v1';
+app.use((_req: Request, res: Response, next: NextFunction) => {
+  res.setHeader('X-Version', SERVICE_VERSION);
+  next();
+});
+
 app.use(
   cors({
     origin:
@@ -18,9 +26,21 @@ app.use(
   })
 );
 
+// Registered before the rate limiter: kubelet/Istio readiness and liveness
+// probes hit this on every pod on a short interval and must never be
+// throttled — a rate-limited health check looks identical to a dead pod to
+// an orchestrator, which then kills a perfectly healthy instance.
+app.get('/health', (_req: Request, res: Response) => {
+  res.status(200).json({
+    status: 'OK',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+  });
+});
+
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 100,
+  max: parseInt(process.env.RATE_LIMIT_MAX ?? '100', 10),
   standardHeaders: true,
   legacyHeaders: false,
   message: { message: 'Too many requests, please try again later.' },
@@ -50,15 +70,6 @@ try {
 }
 
 RegisterRoutes(app);
-
-// Health check endpoint
-app.get('/health', (_req: Request, res: Response) => {
-  res.status(200).json({
-    status: 'OK',
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
-  });
-});
 
 // Global error handler — must be 4-parameter for Express to treat it as error middleware
 app.use(function errorHandler(

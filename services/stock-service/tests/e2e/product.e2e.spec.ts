@@ -317,6 +317,13 @@ describe('Product API — E2E', () => {
     });
   });
 
+  describe('X-Version header', () => {
+    it('deve responder com X-Version=v1 quando SERVICE_VERSION não está definido', async () => {
+      const res = await api.get('/health').expect(200);
+      expect(res.headers['x-version']).toBe('v1');
+    });
+  });
+
   // ══════════════════════════════════════════════════════════════════════════
   // DELETE /product/:id — remover produto do stock
   // ══════════════════════════════════════════════════════════════════════════
